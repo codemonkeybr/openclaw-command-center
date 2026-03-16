@@ -23,7 +23,7 @@ That's it. With zero config, the app runs in **demo mode** — full UI with simu
 The UI has three zones:
 
 - **Left** — Animated mascot (tap to talk to Jansky, the boss agent)
-- **Right** — Pixel art office with 3 agents at desks, conference huddles, personality-driven wandering, real system metrics, weather widget, digital clock
+- **Right** — Pixel art office with 3 agents at desks, conference huddles, personality-driven wandering, real system metrics, weather widget, digital clock, kanban whiteboard, ambient sounds
 - **Bottom** — Terminal log showing agent activity
 
 ### The Team
@@ -35,6 +35,15 @@ The UI has three zones:
 | **Nova** | `claw-2` | Research/web | Purple | fable (warm) |
 
 Tap an agent in the office to start recording a voice message for them. Tap again to send. Agents respond with per-character TTS voices.
+
+### Office Features
+
+- **Kanban whiteboard** — Real-time task board showing IDLE / BUSY / DONE columns with agent-colored dots. Tracks session uptime and task completion count.
+- **Ambient sounds** — Subtle keyboard clicks when agents are working, a ding when tasks complete, and an hourly chime synced to the clock.
+- **Time-aware behavior** — Agents visit the coffee machine more in the morning (7-9am), take more sofa breaks in the afternoon (2-4pm), and stay at their desks more during late night hours.
+- **Server rack** — Real system metrics (CPU%, MEM%, DISK%, temperature) with color-coded bars and blinking LEDs for critical thresholds.
+- **Weather widget** — Live weather from wttr.in with rain effect on walls.
+- **Conference huddles** — Agents periodically gather at the round table with rotating discussion topics.
 
 ## Architecture
 
@@ -52,7 +61,7 @@ Tap an agent in the office to start recording a voice message for them. Tap agai
 | File | Purpose |
 |------|---------|
 | `js/app.js` | Boot sequence, WebSocket client, event routing, tap-to-talk |
-| `js/office.js` | Canvas pixel art office — agents, furniture, wandering AI, huddles, weather ambiance, health metrics |
+| `js/office.js` | Canvas pixel art office — agents, furniture, wandering AI, huddles, weather ambiance, health metrics, kanban whiteboard, ambient sounds, time-aware behavior |
 | `js/voice.js` | Client-side recording, target agent selection, Web Audio playback (2x volume boost) |
 | `js/mascot.js` | Mascot canvas animation + emotion states |
 | `js/terminal.js` | Terminal log renderer |
@@ -104,9 +113,20 @@ Sub-agent prompts emphasize speed: 1-3 sentences, no preamble, act-then-report, 
 
 If your OpenClaw agent can read files, point it at `SETUP.md` — it contains step-by-step instructions the agent can follow to configure everything automatically.
 
+## Session Architecture & Cross-Channel Awareness
+
+The Command Center runs its own **session** (`agent:main:main`) separate from other channels like Telegram. Each channel has independent conversation context, but all channels **share the same memory**.
+
+This means:
+- **Short-term context** (recent messages) is per-channel — what you say on Telegram stays in the Telegram thread, what you say via voice stays in the Command Center thread
+- **Long-term memory** (distilled knowledge) is shared — if the agent learns something important on any channel, it remembers it everywhere
+- The `session-memory` hook automatically flushes important context to shared memory before compaction
+
+The agent is the same brain with separate short-term memory per channel, but unified long-term knowledge.
+
 ## Cost Optimization
 
-Running 3 AI agents can get expensive. Here are copy-paste prompts to keep costs down:
+Running 3 AI agents can get expensive. Here are copy-paste prompts and configs to keep costs down:
 
 ### 1. Use cheap models (default config)
 
@@ -116,26 +136,62 @@ The included `config/openclaw.json.example` already uses cost-optimized models:
 
 ### 2. Even cheaper sub-agents
 
-```
-Switch claw-1 and claw-2 to gemini-2.5-flash-lite via openrouter. Keep main on kimi-k2.5.
-```
-
-### 3. Heartbeat optimization
+For sub-agents that only need to execute simple tasks:
 
 ```
-Set heartbeat interval to 60 minutes, use the cheapest available model for heartbeats, and make the heartbeat target the last-active agent only.
+Switch claw-1 and claw-2 to openrouter/google/gemini-2.5-flash-lite. Keep main on kimi-k2.5.
 ```
 
-### 4. Session management
+### 3. Heartbeat cost optimization
+
+Copy-paste this prompt to your agent:
 
 ```
-After 30 exchanges or 30 minutes of continuous conversation, run /reset to clear context and reduce token costs. Warn me before resetting.
+Please configure my heartbeat settings for cost optimization:
+
+1. Set heartbeat interval to every 60 minutes
+2. Set heartbeat model to openrouter/google/gemini-2.5-flash-lite (the cheapest available)
+3. Set heartbeat target to "last"
+
+This keeps my cache warm while using the cheapest possible model for heartbeats.
+
+Please confirm the changes and show me the updated heartbeat configuration.
 ```
 
-### 5. Memory flush
+### 4. Session management (cost control)
+
+Copy-paste this prompt to your agent:
 
 ```
-Set a soft token threshold of 4000 tokens. When approaching the limit, summarize the conversation so far, save key context to memory, then /reset.
+Please add this session management rule to my system prompt:
+
+## Session Management (Cost Control)
+
+You operate in sessions that accumulate context over time.
+
+When to reset:
+- After 30+ exchanges (context window > 100K tokens)
+- After 30+ minutes of continuous conversation
+- Before switching to a different task domain
+- When you notice you've forgotten early context
+
+How to reset: /reset
+
+Best practice: At reset, output a 2-3 sentence summary of what you learned.
+This preserves knowledge while clearing the context weight.
+
+Confirm the changes and show me the updated system prompt.
+```
+
+### 5. Memory flush before compaction
+
+Copy-paste this prompt to your agent:
+
+```
+Please enable memory flush before compaction with a soft threshold of 4000 tokens.
+This prevents important context from being lost when sessions get compacted.
+
+Confirm the changes are applied.
 ```
 
 ## Raspberry Pi Deployment

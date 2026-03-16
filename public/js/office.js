@@ -43,6 +43,14 @@ let voiceReactionTarget = null;
 let celebrationAgent = null;
 let celebrationTimer = 0;
 
+// Whiteboard kanban tracking
+let kanbanTasks = { doing: [], done: [] };
+let sessionStats = { exchanges: 0, tasksCompleted: 0, startTime: Date.now() };
+
+// Ambient sound system
+let audioCtx = null;
+let soundCooldowns = { click: 0, ding: 0, chime: 0 };
+
 // Furniture positions
 const FURNITURE = {
   waterCooler:  { xPct: 0.07, yPct: 0.52 },
@@ -137,8 +145,23 @@ export function setAgentState(agentId, state, data = {}) {
   agent.stateTimer = 0;
   agent.thoughtText = data.status || data.message || data.tool || '';
   if (state === 'thinking' || state === 'working') {
+    // Kanban: add to doing
+    if (!kanbanTasks.doing.find(t => t.agentId === agentId)) {
+      kanbanTasks.doing.push({ agentId, label: agent.label, text: agent.thoughtText || state, time: Date.now() });
+    }
     if (agent.wanderState !== 'at_desk') { agent.wanderState = 'walking_back'; agent.wanderTarget = null; }
     if (huddleState === 'meeting' || huddleState === 'gathering') huddleState = 'dispersing';
+  } else if (state === 'talking') {
+    // Kanban: move from doing to done
+    const idx = kanbanTasks.doing.findIndex(t => t.agentId === agentId);
+    if (idx !== -1) {
+      const task = kanbanTasks.doing.splice(idx, 1)[0];
+      kanbanTasks.done.push({ ...task, text: truncate(agent.thoughtText || 'done', 8), doneTime: Date.now() });
+      sessionStats.tasksCompleted++;
+      playTaskDing();
+    }
+    sessionStats.exchanges++;
+    if (kanbanTasks.done.length > 6) kanbanTasks.done.shift();
   }
 }
 
@@ -180,11 +203,18 @@ export function update(dt) {
   if (weatherFetchTimer > 300000) { weatherFetchTimer = 0; fetchWeather(); }
   if (healthFetchTimer > 10000) { healthFetchTimer = 0; fetchHealth(); } // every 10s
 
+  // Sound cooldowns
+  for (const key in soundCooldowns) { if (soundCooldowns[key] > 0) soundCooldowns[key] -= dt; }
+
+  // Ambient keyboard clicks when agents are working
+  if (agents.some(a => a.state === 'working')) playKeyClick();
+
   // Clock chime
   const curHour = new Date().getHours();
   if (curHour !== lastChimeHour) {
     lastChimeHour = curHour;
     chimeFlashTimer = 1500; // flash for 1.5s
+    playHourChime();
   }
   if (chimeFlashTimer > 0) chimeFlashTimer -= dt;
 
@@ -290,6 +320,26 @@ function updateWander(agent, dt) {
       agent.wanderTimer -= dt;
       if (agent.wanderTimer <= 0) {
         const prefs = AGENT_WANDER_PREFS[agent.id] || { targets: ['waterCooler', 'coffeeMachine'], checkDesks: false };
+        const hour = new Date().getHours();
+
+        // Time-aware behavior: morning coffee, afternoon slump, late night
+        if (hour >= 7 && hour < 9 && Math.random() < 0.5) {
+          agent.wanderTarget = 'coffeeMachine';
+          agent.wanderState = 'walking_to';
+          agent.thoughtText = ['Morning coffee!', 'Need caffeine...', 'First cup', 'Espresso o\'clock'][Math.floor(Math.random() * 4)];
+          break;
+        }
+        if (hour >= 14 && hour < 16 && Math.random() < 0.35) {
+          agent.wanderTarget = 'sofa';
+          agent.wanderState = 'walking_to';
+          agent.thoughtText = ['Afternoon slump...', 'Quick power nap', 'Need a break', 'Post-lunch lull'][Math.floor(Math.random() * 4)];
+          break;
+        }
+        if ((hour >= 21 || hour < 7) && Math.random() < 0.6) {
+          agent.wanderTimer = randomWanderDelay();
+          agent.thoughtText = '';
+          break; // Late night: stay at desk more often
+        }
 
         // Jansky sometimes walks to another agent's desk to check on them
         if (prefs.checkDesks && Math.random() < 0.3) {
@@ -360,7 +410,7 @@ export function draw() {
 
   drawWaterCooler(); drawBookshelf(); drawServerRack(); drawCoffeeMachine();
   drawRoundTable(); drawFilingCabinet(); drawSofa();
-  drawDigitalClock(); drawWeatherWidget(); drawStatusBoard();
+  drawDigitalClock(); drawWeatherWidget(); drawWhiteboard();
 
   const sorted = [...agents].sort((a, b) => a.yPct - b.yPct);
   for (const a of sorted) {
@@ -394,13 +444,10 @@ function drawRoom(isNight) {
   for (let y = wallH; y < h; y += PX * 8) ctx.fillRect(0, y, w, 1);
   for (let x = 0; x < w; x += PX * 12) ctx.fillRect(x, wallH, 1, h - wallH);
 
-  // Whiteboard
-  const wbW = PX * 16, wbH = PX * 8, wbX = w * 0.50 - wbW / 2, wbY = PX * 3;
+  // Whiteboard frame (content drawn by drawWhiteboard)
+  const wbW = PX * 28, wbH = PX * 13, wbX = Math.floor(w * 0.50) - wbW / 2, wbY = PX * 2;
   ctx.fillStyle = PALETTE.whiteboardFrame; ctx.fillRect(wbX - PX, wbY - PX, wbW + PX * 2, wbH + PX * 2);
   ctx.fillStyle = PALETTE.whiteboard; ctx.fillRect(wbX, wbY, wbW, wbH);
-  ctx.fillStyle = '#3A3ADA';
-  for (let i = 0; i < 4; i++) ctx.fillRect(wbX + PX * (2 + i * 3), wbY + PX * 2, PX * 2, PX);
-  ctx.fillStyle = '#DA3A3A'; ctx.fillRect(wbX + PX * 3, wbY + PX * 4, PX * 6, PX);
 
   drawPlant(w * 0.16, wallH - PX); drawPlant(w * 0.84, wallH - PX);
 
@@ -496,19 +543,85 @@ function drawWeatherCloud(cx, cy, color) {
   pixel(cx - PX * 1.5, cy, PX); pixel(cx - PX * 0.5, cy, PX); pixel(cx + PX * 0.5, cy, PX); pixel(cx + PX * 1.5, cy, PX);
 }
 
-function drawStatusBoard() {
-  const w = canvas.width, x = Math.floor(w * 0.38), y = PX * 3, bw = PX * 8, bh = PX * 6;
-  ctx.fillStyle = '#2A2E3A'; ctx.fillRect(x - 1, y - 1, bw + 2, bh + 2);
-  ctx.fillStyle = '#0D1220'; ctx.fillRect(x, y, bw, bh);
-  const dotR = PX * 0.5;
-  const colors = { idle: '#00FF66', thinking: '#FFCC00', working: '#AA66FF', talking: '#00DDFF' };
-  for (let i = 0; i < agents.length; i++) {
-    const a = agents[i], dy = y + PX * 1.5 + i * PX * 1.8;
-    ctx.fillStyle = colors[a.state] || '#00FF66';
-    ctx.beginPath(); ctx.arc(x + PX * 1.2, dy, dotR, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = a.color; ctx.font = `${PX * 1.3}px VT323`;
-    ctx.fillText(a.label, x + PX * 2.2, dy + PX * 0.4);
+function drawWhiteboard() {
+  const w = canvas.width;
+  const wbW = PX * 28, wbH = PX * 13;
+  const wbX = Math.floor(w * 0.50) - wbW / 2, wbY = PX * 2;
+
+  // Header
+  ctx.fillStyle = '#555';
+  ctx.font = `bold ${PX * 1.8}px VT323`; ctx.textAlign = 'center';
+  ctx.fillText('TEAM BOARD', wbX + wbW / 2, wbY + PX * 1.8);
+  ctx.fillStyle = '#CCCCCC';
+  ctx.fillRect(wbX + PX, wbY + PX * 2.2, wbW - PX * 2, 1);
+
+  // 3 kanban columns
+  const colW = Math.floor((wbW - PX * 2) / 3);
+  const colY = wbY + PX * 3;
+  const headers = ['IDLE', 'BUSY', 'DONE'];
+  const hColors = ['#2A8A3A', '#CC8800', '#3A3ADA'];
+  const stateColors = { idle: '#00FF66', thinking: '#FFCC00', working: '#AA66FF', talking: '#00DDFF' };
+
+  for (let c = 0; c < 3; c++) {
+    const cx = wbX + PX + c * colW;
+    if (c > 0) { ctx.fillStyle = '#CCCCCC'; ctx.fillRect(cx, colY - PX * 0.5, 1, PX * 7); }
+    ctx.fillStyle = hColors[c]; ctx.font = `bold ${PX * 1.3}px VT323`; ctx.textAlign = 'center';
+    ctx.fillText(headers[c], cx + colW / 2, colY + PX * 0.3);
   }
+
+  // Column 1: IDLE agents
+  const idleAgents = agents.filter(a => a.state === 'idle');
+  for (let i = 0; i < idleAgents.length && i < 3; i++) {
+    const a = idleAgents[i], cx = wbX + PX + colW / 2, cy = colY + PX * 1.5 + i * PX * 1.6;
+    ctx.fillStyle = a.color;
+    ctx.beginPath(); ctx.arc(cx - PX * 3, cy, PX * 0.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#444'; ctx.font = `${PX * 1.2}px VT323`; ctx.textAlign = 'left';
+    ctx.fillText(a.label, cx - PX * 2, cy + PX * 0.3);
+  }
+
+  // Column 2: BUSY agents
+  const busyAgents = agents.filter(a => a.state !== 'idle');
+  for (let i = 0; i < busyAgents.length && i < 3; i++) {
+    const a = busyAgents[i], cx = wbX + PX + colW + colW / 2, cy = colY + PX * 1.5 + i * PX * 1.6;
+    ctx.fillStyle = stateColors[a.state] || a.color;
+    ctx.beginPath(); ctx.arc(cx - PX * 3, cy, PX * 0.4, 0, Math.PI * 2); ctx.fill();
+    // Pulsing dot for active work
+    if (a.state === 'working' || a.state === 'thinking') {
+      const pulse = 0.3 + Math.sin(tick / 200) * 0.2;
+      ctx.save(); ctx.globalAlpha = pulse;
+      ctx.beginPath(); ctx.arc(cx - PX * 3, cy, PX * 0.8, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+    ctx.fillStyle = '#444'; ctx.font = `${PX * 1.2}px VT323`; ctx.textAlign = 'left';
+    ctx.fillText(a.label, cx - PX * 2, cy + PX * 0.3);
+  }
+
+  // Column 3: DONE (recent completed tasks)
+  const recentDone = kanbanTasks.done.slice(-3);
+  for (let i = 0; i < recentDone.length; i++) {
+    const t = recentDone[i], a = agents.find(ag => ag.id === t.agentId);
+    if (!a) continue;
+    const cx = wbX + PX + colW * 2 + colW / 2, cy = colY + PX * 1.5 + i * PX * 1.6;
+    ctx.fillStyle = a.color;
+    ctx.beginPath(); ctx.arc(cx - PX * 3, cy, PX * 0.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2A8A3A'; ctx.font = `bold ${PX * 1.2}px VT323`; ctx.textAlign = 'left';
+    ctx.fillText('>', cx - PX * 2, cy + PX * 0.3);
+    ctx.fillStyle = '#555'; ctx.font = `${PX * 1.1}px VT323`;
+    ctx.fillText(a.label, cx - PX * 0.8, cy + PX * 0.3);
+  }
+
+  // Bottom stats bar
+  ctx.fillStyle = '#CCCCCC';
+  ctx.fillRect(wbX + PX, wbY + wbH - PX * 2.8, wbW - PX * 2, 1);
+  const elapsed = Math.floor((Date.now() - sessionStats.startTime) / 60000);
+  const hrs = Math.floor(elapsed / 60), mins = elapsed % 60;
+  const timeStr = hrs > 0 ? `${hrs}h${String(mins).padStart(2, '0')}m` : `${mins}m`;
+  ctx.fillStyle = '#777'; ctx.font = `${PX * 1.2}px VT323`;
+  ctx.textAlign = 'left';
+  ctx.fillText(`UP ${timeStr}`, wbX + PX * 2, wbY + wbH - PX * 1.2);
+  ctx.textAlign = 'right';
+  ctx.fillText(`${sessionStats.tasksCompleted} done`, wbX + wbW - PX * 2, wbY + wbH - PX * 1.2);
+  ctx.textAlign = 'start';
 }
 
 // --- Furniture ---
@@ -803,3 +916,54 @@ function pixel(x, y, size) { ctx.fillRect(Math.floor(x), Math.floor(y), size, si
 function drawPixelPattern(p, sX, sY, sz) { for (let r=0;r<p.length;r++) for (let c=0;c<p[r].length;c++) if (p[r][c]==='X') pixel(sX+c*sz,sY+r*sz,sz); }
 function darken(hex, amt) { const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return `rgb(${Math.floor(r*(1-amt))},${Math.floor(g*(1-amt))},${Math.floor(b*(1-amt))})`; }
 function truncate(s, max) { if (!s) return ''; return s.length>max?s.slice(0,max-1)+'\u2026':s; }
+
+// --- Ambient Sound System ---
+
+function ensureAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (e) { return null; }
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playKeyClick() {
+  const ctx = ensureAudio();
+  if (!ctx || soundCooldowns.click > 0) return;
+  soundCooldowns.click = 200 + Math.random() * 500;
+  const dur = 0.015 + Math.random() * 0.01;
+  const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.03;
+  const src = ctx.createBufferSource();
+  src.buffer = buf; src.connect(ctx.destination); src.start();
+}
+
+function playTaskDing() {
+  const ctx = ensureAudio();
+  if (!ctx || soundCooldowns.ding > 0) return;
+  soundCooldowns.ding = 2000;
+  const osc = ctx.createOscillator(), gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(600, ctx.currentTime);
+  osc.frequency.setValueAtTime(800, ctx.currentTime + 0.08);
+  gain.gain.setValueAtTime(0.08, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(); osc.stop(ctx.currentTime + 0.3);
+}
+
+function playHourChime() {
+  const ctx = ensureAudio();
+  if (!ctx || soundCooldowns.chime > 0) return;
+  soundCooldowns.chime = 5000;
+  const osc = ctx.createOscillator(), gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(523, ctx.currentTime);
+  osc.frequency.setValueAtTime(659, ctx.currentTime + 0.3);
+  gain.gain.setValueAtTime(0.06, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(); osc.stop(ctx.currentTime + 0.8);
+}
