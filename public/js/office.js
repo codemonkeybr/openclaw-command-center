@@ -51,6 +51,14 @@ let sessionStats = { exchanges: 0, tasksCompleted: 0, startTime: Date.now() };
 let audioCtx = null;
 let soundCooldowns = { click: 0, ding: 0, chime: 0 };
 
+// Background color config — overridden by /api/ui-config
+let bgConfig = {
+  wall:       '#141828',
+  wallAccent: '#1A2040',
+  floor:      '#1A1E2E',
+  floorLine:  '#222840',
+};
+
 // Furniture positions
 const FURNITURE = {
   waterCooler:  { xPct: 0.07, yPct: 0.52 },
@@ -117,6 +125,13 @@ export async function init(canvasId) {
         if (cfg?.color)      def.color      = cfg.color;
         if (cfg?.hairColor)  def.hairColor  = cfg.hairColor;
         if (cfg?.clothColor) def.clothColor = cfg.clothColor;
+      }
+      const bg = uiConfig.background;
+      if (bg) {
+        if (bg.wall        && typeof bg.wall        === 'string') bgConfig.wall        = bg.wall;
+        if (bg.wallAccent  && typeof bg.wallAccent  === 'string') bgConfig.wallAccent  = bg.wallAccent;
+        if (bg.floor       && typeof bg.floor       === 'string') bgConfig.floor       = bg.floor;
+        if (bg.floorLine   && typeof bg.floorLine   === 'string') bgConfig.floorLine   = bg.floorLine;
       }
     }
   } catch (err) {
@@ -467,10 +482,10 @@ function isNightTime() {
 function drawRoom(isNight) {
   const w = canvas.width, h = canvas.height, wallH = h * 0.32;
 
-  ctx.fillStyle = PALETTE.wall; ctx.fillRect(0, 0, w, wallH);
-  ctx.fillStyle = PALETTE.wallAccent; ctx.fillRect(0, wallH - PX, w, PX);
-  ctx.fillStyle = PALETTE.floor; ctx.fillRect(0, wallH, w, h - wallH);
-  ctx.fillStyle = PALETTE.floorLine;
+  ctx.fillStyle = bgConfig.wall; ctx.fillRect(0, 0, w, wallH);
+  ctx.fillStyle = bgConfig.wallAccent; ctx.fillRect(0, wallH - PX, w, PX);
+  ctx.fillStyle = bgConfig.floor; ctx.fillRect(0, wallH, w, h - wallH);
+  ctx.fillStyle = bgConfig.floorLine;
   for (let y = wallH; y < h; y += PX * 8) ctx.fillRect(0, y, w, 1);
   for (let x = 0; x < w; x += PX * 12) ctx.fillRect(x, wallH, 1, h - wallH);
 

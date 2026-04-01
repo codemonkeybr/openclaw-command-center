@@ -232,6 +232,12 @@ app.get('/api/ui-config', rateLimit({ windowMs: 60000, maxRequests: 120 }), (req
       'claw-1': { name: 'Orbit',  color: '#00DDFF', hairColor: '#00DDFF', clothColor: '#008499', voice: 'echo'  },
       'claw-2': { name: 'Nova',   color: '#AA66FF', hairColor: '#AA66FF', clothColor: '#663D99', voice: 'fable' },
     },
+    background: {
+      wall:       '#141828',
+      wallAccent: '#1A2040',
+      floor:      '#1A1E2E',
+      floorLine:  '#222840',
+    },
   };
   const configPath = join(__dirname, '..', 'config', 'ui.json');
   if (existsSync(configPath)) {
@@ -247,6 +253,13 @@ app.get('/api/ui-config', rateLimit({ windowMs: 60000, maxRequests: 120 }), (req
           if (clothColor && typeof clothColor === 'string') defaults.agents[agentId].clothColor = clothColor;
           if (voice      && typeof voice      === 'string') defaults.agents[agentId].voice      = voice;
         }
+      }
+      if (parsed.background) {
+        const { wall, wallAccent, floor, floorLine } = parsed.background;
+        if (wall       && typeof wall       === 'string') defaults.background.wall       = wall;
+        if (wallAccent && typeof wallAccent === 'string') defaults.background.wallAccent = wallAccent;
+        if (floor      && typeof floor      === 'string') defaults.background.floor      = floor;
+        if (floorLine  && typeof floorLine  === 'string') defaults.background.floorLine  = floorLine;
       }
     } catch (err) {
       console.warn('[ui-config] Failed to parse config/ui.json, using defaults:', err.message);

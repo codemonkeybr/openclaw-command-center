@@ -21,5 +21,11 @@
       "clothColor": "#663D99",
       "voice": "fable"
     }
+  },
+  "background": {
+    "wall":       "#141828",
+    "wallAccent": "#1A2040",
+    "floor":      "#1A1E2E",
+    "floorLine":  "#222840"
   }
 }
