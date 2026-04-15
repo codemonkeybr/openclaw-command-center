@@ -25,6 +25,7 @@ import crypto from 'node:crypto';
 import helmet from 'helmet';
 import cors from 'cors';
 import config from './config.js';
+import { resolveUiConfig } from './theme.js';
 import OpenClawBridge from './openclaw-bridge.js';
 import { transcribe, speak } from './voice.js';
 import {
@@ -226,46 +227,7 @@ app.get('/api/health', rateLimit({ windowMs: 60000, maxRequests: 120 }), (req, r
 
 // UI config - agent display names, colors, voices
 app.get('/api/ui-config', rateLimit({ windowMs: 60000, maxRequests: 120 }), (req, res) => {
-  const defaults = {
-    agents: {
-      'main':   { name: 'Jansky', color: '#FFD700', hairColor: '#FFD700', clothColor: '#998100', voice: 'onyx'  },
-      'claw-1': { name: 'Orbit',  color: '#00DDFF', hairColor: '#00DDFF', clothColor: '#008499', voice: 'echo'  },
-      'claw-2': { name: 'Nova',   color: '#AA66FF', hairColor: '#AA66FF', clothColor: '#663D99', voice: 'fable' },
-    },
-    background: {
-      wall:       '#141828',
-      wallAccent: '#1A2040',
-      floor:      '#1A1E2E',
-      floorLine:  '#222840',
-    },
-  };
-  const configPath = join(__dirname, '..', 'config', 'ui.json');
-  if (existsSync(configPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(configPath, 'utf8'));
-      // Merge: only override known agent IDs and known fields
-      for (const agentId of ['main', 'claw-1', 'claw-2']) {
-        if (parsed.agents?.[agentId]) {
-          const { name, color, hairColor, clothColor, voice } = parsed.agents[agentId];
-          if (name       && typeof name       === 'string') defaults.agents[agentId].name       = name;
-          if (color      && typeof color      === 'string') defaults.agents[agentId].color      = color;
-          if (hairColor  && typeof hairColor  === 'string') defaults.agents[agentId].hairColor  = hairColor;
-          if (clothColor && typeof clothColor === 'string') defaults.agents[agentId].clothColor = clothColor;
-          if (voice      && typeof voice      === 'string') defaults.agents[agentId].voice      = voice;
-        }
-      }
-      if (parsed.background) {
-        const { wall, wallAccent, floor, floorLine } = parsed.background;
-        if (wall       && typeof wall       === 'string') defaults.background.wall       = wall;
-        if (wallAccent && typeof wallAccent === 'string') defaults.background.wallAccent = wallAccent;
-        if (floor      && typeof floor      === 'string') defaults.background.floor      = floor;
-        if (floorLine  && typeof floorLine  === 'string') defaults.background.floorLine  = floorLine;
-      }
-    } catch (err) {
-      console.warn('[ui-config] Failed to parse config/ui.json, using defaults:', err.message);
-    }
-  }
-  res.json(defaults);
+  res.json(resolveUiConfig());
 });
 
 // Local browser token - no API key needed, localhost only

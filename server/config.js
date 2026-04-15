@@ -36,6 +36,9 @@ const config = {
     voice: parseInt(process.env.RATE_LIMIT_VOICE || '20', 10),
   },
   
+  // Theme — filename in themes/ folder without .json extension
+  theme: process.env.THEME || 'default',
+
   // Logging
   logLevel: process.env.LOG_LEVEL || 'info',
   

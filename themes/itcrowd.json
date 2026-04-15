@@ -1,0 +1,13 @@
+{
+  "agents": {
+    "main":   { "name": "Jen",  "color": "#FF3344", "hairColor": "#CC5522", "clothColor": "#CC1122", "voice": "onyx"  },
+    "claw-1": { "name": "Moss", "color": "#DDBB66", "hairColor": "#1A1A1A", "clothColor": "#8BAABB", "voice": "echo"  },
+    "claw-2": { "name": "Roy",  "color": "#4488DD", "hairColor": "#7A3A20", "clothColor": "#666666", "voice": "fable" }
+  },
+  "background": {
+    "wall":       "#181A18",
+    "wallAccent": "#262A22",
+    "floor":      "#101210",
+    "floorLine":  "#181C16"
+  }
+}
